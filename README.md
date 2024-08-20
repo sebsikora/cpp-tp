@@ -20,4 +20,4 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## cpp-tp.hpp
 
-A thread pool class that runs arbitrary callables.
+A thread pool class that manages worker threads that run arbitrary callables.

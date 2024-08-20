@@ -16,7 +16,8 @@
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-// cpp-tp.hpp - A thread pool class that runs arbitrary callables
+// cpp-tp.hpp - A thread pool class that manages worker threads that run
+//              arbitrary callables
 
 
 #include <functional>
@@ -47,30 +48,30 @@ public:
         }
     }
 
+
     // Copy Constructor (deleted)
     ThreadPool(const ThreadPool&) = delete;
+
 
     // Destructor
     ~ThreadPool() {
         stop();
     }
 
+
     // Add a new job to the queue
     void addJob(std::function<void()> work_func) {
-        {
-            std::lock_guard<std::mutex> c_lk(m_counter_mutex);
-            ++m_pending_jobs;
-#ifdef VERBOSE
-            std::string msg = "Adding job to queue - There are now " + std::to_string(m_pending_jobs) + " pending jobs.\n";
-            std::cout << msg;
-#endif
-        }
-        
         std::lock_guard<std::mutex> m_lk(m_management_mutex);
+        ++m_pending_jobs;
+#ifdef VERBOSE
+        std::string msg = "Adding job to queue - There are now " + std::to_string(m_pending_jobs) + " pending jobs.\n";
+        std::cout << msg;
+#endif
         m_job_queue.emplace(std::make_unique<std::function<void()>>(work_func));
         m_management_cv.notify_one();
     }
     
+
     // Start the threadpool
     // Set worker_count = 0 to use one thread per hardware supported thread
     bool start(size_t worker_count) {
@@ -94,6 +95,7 @@ public:
         
     }
     
+
     // Stop the threadpool
     // Call to stop() will block until all running jobs have finished and been join()ed, set clear_queue = false
     // to leave pending jobs on the queue or clear_queue = true to delete pending jobs.
@@ -120,25 +122,49 @@ public:
         return true;
     }
     
+
     // Check if worker threads are running
     bool isStopped() {
         return m_stopped;
     }
+
+
+    // Get the count of queued and running jobs
+    size_t pendingJobs() {
+        std::unique_lock<std::mutex> m_lk(m_management_mutex);
+        return m_pending_jobs;
+    }
+
+
+    // Get the count of queued jobs
+    size_t queuedJobs() {
+        std::unique_lock<std::mutex> m_lk(m_management_mutex);
+        return m_job_queue.size();
+    }
     
+
     // Wait for all pending jobs to complete
     void wait() {
-        while(true) {
-            std::unique_lock<std::mutex> c_lk(m_counter_mutex);
-            if (m_pending_jobs == 0) {
-                break;
-            }
+        std::unique_lock<std::mutex> m_lk(m_management_mutex);
 
+        if (m_pending_jobs > 0) {
             m_waiting = true;
-            m_counter_cv.wait(c_lk, [this](){ return (m_pending_jobs == 0); });
 
+            m_counter_cv.wait(m_lk, [this](){ return (m_pending_jobs == 0); });
             m_waiting = false;
-            break;
         }
+    }
+
+
+    // Clear the job queue and return the number of cleared jobs
+    size_t clearQueue() {
+        std::lock_guard<std::mutex> m_lk(m_management_mutex);
+
+        size_t queued_jobs_cleared = m_job_queue.size();
+        m_pending_jobs -= queued_jobs_cleared;
+        m_job_queue = {};
+
+        return queued_jobs_cleared;
     }
 
 private:
@@ -149,9 +175,9 @@ private:
         std::string msg = "Worker " + std::to_string(id) + " started.\n";
         std::cout << msg;
 #endif
+        std::unique_ptr<std::function<void()>> job;
 
         while(true) {
-            std::unique_ptr<std::function<void()>> job;
             {
                 std::unique_lock<std::mutex> m_lk(m_management_mutex);
                 m_management_cv.wait(m_lk, [this](){ return ((!m_job_queue.empty()) || (m_stopped)); });
@@ -171,7 +197,7 @@ private:
             (*job)();   // run the job and return the result via callback
 
             {
-                std::lock_guard<std::mutex> c_lk(m_counter_mutex);
+                std::lock_guard<std::mutex> m_lk(m_management_mutex);
                 --m_pending_jobs;
 #ifdef VERBOSE
                 msg = "Worker " + std::to_string(id) + " finished - There are now " + std::to_string(m_pending_jobs) + " pending jobs.\n";
@@ -188,6 +214,7 @@ private:
 #endif
     }
     
+
     // Class data
     bool m_stopped;
     bool m_waiting;
@@ -198,8 +225,7 @@ private:
     std::mutex m_management_mutex;
     std::condition_variable m_management_cv;
 
-    size_t m_pending_jobs;
-    std::mutex m_counter_mutex;
+    ssize_t m_pending_jobs;
     std::condition_variable m_counter_cv;
     
 };
