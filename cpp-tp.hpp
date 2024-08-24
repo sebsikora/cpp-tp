@@ -141,6 +141,13 @@ public:
         std::unique_lock<std::mutex> m_lk(m_management_mutex);
         return m_job_queue.size();
     }
+
+
+    // Get the count of running jobs
+    size_t runningJobs() {
+        std::unique_lock<std::mutex> m_lk(m_management_mutex);
+        return m_pending_jobs - m_job_queue.size();
+    }
     
 
     // Wait for all pending jobs to complete
